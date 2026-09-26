@@ -91,11 +91,14 @@ sudo pacman-key --init
 
 # Populate pacman keys
 echo "Populating pacman keys..."
-sudo pacman-key --populate archlinux
+# No argument loads every keyring on the system: archlinux plus holo, which signs Valve's SteamOS packages
+sudo pacman-key --populate
 
 # Install Samba
 echo "Installing samba..."
-sudo pacman -Sy --noconfirm samba || fail "Failed to install samba. See the terminal output above for details."
+# SteamOS already ships older smbclient/libwbclient/ldb; samba doesn't pin libwbclient or ldb to its own version,
+# so install them together to avoid "version SAMBA_x.y.z not found" errors from mismatched libraries
+sudo pacman -Sy --noconfirm --needed samba smbclient libwbclient ldb || fail "Failed to install samba. See the terminal output above for details."
 
 # Initialize Samba configuration after installed
 echo "Initializing new smb.conf file..."
@@ -175,8 +178,12 @@ echo "Enabling and starting smb service..."
 sudo systemctl enable smb.service
 sudo systemctl start smb.service
 
-firewall-cmd --permanent --zone=public --add-service=samba
-firewall-cmd --reload
+# Open the firewall for Samba, but only if firewalld is installed and running
+if command -v firewall-cmd > /dev/null && sudo firewall-cmd --state > /dev/null 2>&1; then
+    echo "Allowing samba through the firewall..."
+    sudo firewall-cmd --permanent --zone=public --add-service=samba
+    sudo firewall-cmd --reload
+fi
 
 
 # Restart smb service
