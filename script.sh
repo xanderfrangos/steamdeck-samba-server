@@ -82,14 +82,34 @@ READONLY_DISABLED=1
 
 # Edit pacman.conf file
 echo "Editing pacman.conf file..."
-# Older versions of this script replaced "SigLevel = Required DatabaseOptional" with a bare "SigLevel = TrustAll".
-# pacman 7.1 (SteamOS 3.9) treats a bare TrustAll as "database signatures required", and SteamOS repos don't
-# sign their databases, so undo that first, then add TrustAll while keeping DatabaseOptional
-sudo sed -i \
-    -e '/^SigLevel[[:space:]]*=[[:space:]]*TrustAll[[:space:]]*$/d' \
-    -e 's/^#\(SigLevel[[:space:]]*=[[:space:]]*Required DatabaseOptional\)[[:space:]]*$/\1/' \
-    -e 's/^SigLevel[[:space:]]*=[[:space:]]*Required DatabaseOptional[[:space:]]*$/SigLevel = Required DatabaseOptional TrustAll/' \
-    /etc/pacman.conf
+# SteamOS repos don't sign their databases. pacman 7.1 (SteamOS 3.9) requires database signatures unless
+# SigLevel says otherwise, so set the global SigLevel explicitly, whatever the file had before (including the
+# bare "SigLevel = TrustAll" older versions of this script left behind)
+PACMAN_SIGLEVEL="SigLevel = Required DatabaseOptional TrustAll"
+pacman_conf_tmp=$(mktemp) || fail "Could not create a temporary file."
+# Two passes: the first checks whether [options] already has an active SigLevel line, the second replaces
+# the first such line in place (dropping any others), or adds one right after [options] if there was none
+awk -v siglevel="$PACMAN_SIGLEVEL" '
+    FNR == 1 { in_opts = 0 }
+    /^[[:space:]]*\[/ { in_opts = ($0 ~ /^[[:space:]]*\[options\][[:space:]]*$/) }
+    NR == FNR { if (in_opts && /^[[:space:]]*SigLevel[[:space:]]*=/) has_siglevel = 1; next }
+    in_opts && /^[[:space:]]*SigLevel[[:space:]]*=/ { if (!written) { print siglevel; written = 1 } next }
+    { print }
+    in_opts && /^[[:space:]]*\[options\]/ && !has_siglevel { print siglevel; written = 1 }
+' /etc/pacman.conf /etc/pacman.conf > "$pacman_conf_tmp" || fail "Could not update pacman.conf."
+sudo cp -n /etc/pacman.conf /etc/pacman.conf.samba-script.bak
+sudo tee /etc/pacman.conf < "$pacman_conf_tmp" > /dev/null || fail "Could not update pacman.conf."
+rm -f "$pacman_conf_tmp"
+
+# Check what pacman will actually use, so a pacman.conf this script doesn't understand fails clearly here.
+# pacman-conf only prints a repo's SigLevel if the repo sets its own, otherwise the global one applies
+global_siglevel=$(pacman-conf SigLevel)
+for repo in $(pacman-conf --repo-list); do
+    repo_siglevel=$(pacman-conf --repo="$repo" SigLevel)
+    if echo "${repo_siglevel:-$global_siglevel}" | grep -qx DatabaseRequired; then
+        fail "pacman still requires a database signature for the '$repo' repository, which SteamOS doesn't provide. Check the SigLevel lines in /etc/pacman.conf."
+    fi
+done
 
 # Initialize pacman keys
 echo "Initializing pacman keys..."
