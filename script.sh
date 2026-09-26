@@ -49,9 +49,36 @@ if [ "$(sudo grep '^deck:' /etc/shadow | cut -d':' -f2)" = "*" ] || [ "$(sudo gr
     fi
 fi
 
-# Disable steamos-readonly
-echo "Disabling steamos-readonly..."
-sudo steamos-readonly disable
+# Print an error (and show it in a dialog in GUI mode), then exit
+fail() {
+    echo "ERROR: $1" >&2
+    if [ "$GUI_MODE" = "gui" ]; then
+        zenity --error --width=400 --height=100 --text="$1"
+    fi
+    exit 1
+}
+GUI_MODE="$1"
+
+# SteamOS 3.9 renamed steamos-readonly to holo-readonly; older releases only have steamos-readonly
+READONLY_TOOL=$(command -v holo-readonly || command -v steamos-readonly)
+if [ -z "$READONLY_TOOL" ]; then
+    fail "Could not find holo-readonly or steamos-readonly. Is this SteamOS?"
+fi
+
+# Re-enable the read-only filesystem; runs on every exit (success, error, abort or Ctrl+C) once it's been disabled
+relock() {
+    if [ "$READONLY_DISABLED" = "1" ]; then
+        echo "Re-enabling read-only filesystem..."
+        sudo "$READONLY_TOOL" enable && echo "Filesystem now read-only"
+        READONLY_DISABLED=0
+    fi
+}
+trap relock EXIT
+
+# Disable read-only filesystem
+echo "Disabling read-only filesystem..."
+sudo "$READONLY_TOOL" disable || fail "Failed to disable the read-only filesystem."
+READONLY_DISABLED=1
 
 # Edit pacman.conf file
 echo "Editing pacman.conf file..."
@@ -68,7 +95,7 @@ sudo pacman-key --populate archlinux
 
 # Install Samba
 echo "Installing samba..."
-sudo pacman -Sy --noconfirm samba
+sudo pacman -Sy --noconfirm samba || fail "Failed to install samba. See the terminal output above for details."
 
 # Initialize Samba configuration after installed
 echo "Initializing new smb.conf file..."
@@ -157,8 +184,7 @@ echo "Restarting smb service..."
 sudo systemctl restart smb.service
 
 # re-enable the readonly filesystem
-sudo steamos-readonly enable
-echo "Filesystem now read-only"
+relock
 
 # Final confirmation
 if [ "$1" = "gui" ]; then
