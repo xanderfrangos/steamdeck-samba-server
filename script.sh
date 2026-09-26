@@ -100,11 +100,36 @@ echo "Installing samba..."
 # so install them together to avoid "version SAMBA_x.y.z not found" errors from mismatched libraries
 sudo pacman -Sy --noconfirm --needed samba smbclient libwbclient ldb || fail "Failed to install samba. See the terminal output above for details."
 
+# Ask for the network name other devices will see (\\name); NetBIOS names are limited to 15 characters
+DEFAULT_NETBIOS_NAME="steamdeck"
+while true; do
+    if [ "$GUI_MODE" = "gui" ]; then
+        # Cancelling the dialog keeps the default name
+        netbios_name=$(zenity --entry --width=400 --title="Network name" \
+            --text="Enter the name your Steam Deck will appear as on the network:" \
+            --entry-text="$DEFAULT_NETBIOS_NAME") || netbios_name="$DEFAULT_NETBIOS_NAME"
+    else
+        read -p "Enter the network name for your Steam Deck, or press ENTER to use '$DEFAULT_NETBIOS_NAME': " netbios_name
+    fi
+    netbios_name="${netbios_name:-$DEFAULT_NETBIOS_NAME}"
+
+    if [[ "$netbios_name" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,13}[A-Za-z0-9])?$ && ! "$netbios_name" =~ ^[0-9]+$ ]]; then
+        break
+    fi
+    invalid_name_message="'$netbios_name' is not a valid network name. Use up to 15 letters, numbers or hyphens (not only numbers, and not starting or ending with a hyphen)."
+    if [ "$GUI_MODE" = "gui" ]; then
+        zenity --error --width=400 --height=100 --text="$invalid_name_message"
+    else
+        echo "$invalid_name_message"
+    fi
+done
+echo "Network name: $netbios_name"
+
 # Initialize Samba configuration after installed
 echo "Initializing new smb.conf file..."
 sudo tee /etc/samba/smb.conf > /dev/null <<EOF
 [global]
-netbios name = steamdeck
+netbios name = $netbios_name
 EOF
 
 # Function to add a new share to smb.conf
@@ -173,10 +198,11 @@ else
     sudo smbpasswd -a deck
 fi
 
-# Enable and start smb service
-echo "Enabling and starting smb service..."
-sudo systemctl enable smb.service
-sudo systemctl start smb.service
+# Enable and start smb service, plus nmb, which announces the network name so \\name works
+# even when it differs from the Deck's hostname
+echo "Enabling and starting smb and nmb services..."
+sudo systemctl enable smb.service nmb.service
+sudo systemctl start smb.service nmb.service
 
 # Open the firewall for Samba, but only if firewalld is installed and running
 if command -v firewall-cmd > /dev/null && sudo firewall-cmd --state > /dev/null 2>&1; then
@@ -186,17 +212,19 @@ if command -v firewall-cmd > /dev/null && sudo firewall-cmd --state > /dev/null 
 fi
 
 
-# Restart smb service
-echo "Restarting smb service..."
-sudo systemctl restart smb.service
+# Restart smb and nmb services
+echo "Restarting smb and nmb services..."
+sudo systemctl restart smb.service nmb.service
 
 # re-enable the readonly filesystem
 relock
 
 # Final confirmation
+# Four backslashes because both zenity --text and echo -e turn \\ into \, leaving \\name
+network_path='\\\\'"$netbios_name"
 if [ "$1" = "gui" ]; then
-    zenity --info --width=400 --height=100 --text="Samba server set up successfully! You can now access the shared directories on your Steam Deck from any device on your local network."
+    zenity --info --width=400 --height=100 --text="Samba server set up successfully! You can now access the shared directories on your Steam Deck from any device on your local network at $network_path"
 else
-    echo -e "${BOLDGREEN}Samba server set up successfully!${ENDCOLOR} You can now access the shared directories on your Steam Deck from any device on your local network."
+    echo -e "${BOLDGREEN}Samba server set up successfully!${ENDCOLOR} You can now access the shared directories on your Steam Deck from any device on your local network at $network_path"
     read -p "Press Enter to continue..."
 fi

@@ -29,6 +29,8 @@ Once the Samba server is installed, you can connect to it from any device on the
 
 `\\steamdeck`
 
+If you chose a different network name during installation, use that instead (for example `\\my-deck`).
+
 You should then be prompted to enter your SteamDeck username and password. Once you do so, you'll be able to access the files on your SteamDeck just like any other shared folder.
 
 ## Contributing
