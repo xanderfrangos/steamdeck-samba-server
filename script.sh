@@ -82,8 +82,14 @@ READONLY_DISABLED=1
 
 # Edit pacman.conf file
 echo "Editing pacman.conf file..."
-sudo sed -i '/^SigLevel[[:space:]]*=[[:space:]]*Required DatabaseOptional/s/^/#/' /etc/pacman.conf
-sudo sed -i '/^#SigLevel[[:space:]]*=[[:space:]]*Required DatabaseOptional/a\SigLevel = TrustAll' /etc/pacman.conf
+# Older versions of this script replaced "SigLevel = Required DatabaseOptional" with a bare "SigLevel = TrustAll".
+# pacman 7.1 (SteamOS 3.9) treats a bare TrustAll as "database signatures required", and SteamOS repos don't
+# sign their databases, so undo that first, then add TrustAll while keeping DatabaseOptional
+sudo sed -i \
+    -e '/^SigLevel[[:space:]]*=[[:space:]]*TrustAll[[:space:]]*$/d' \
+    -e 's/^#\(SigLevel[[:space:]]*=[[:space:]]*Required DatabaseOptional\)[[:space:]]*$/\1/' \
+    -e 's/^SigLevel[[:space:]]*=[[:space:]]*Required DatabaseOptional[[:space:]]*$/SigLevel = Required DatabaseOptional TrustAll/' \
+    /etc/pacman.conf
 
 # Initialize pacman keys
 echo "Initializing pacman keys..."
